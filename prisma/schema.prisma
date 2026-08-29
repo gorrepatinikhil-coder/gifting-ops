@@ -1,0 +1,781 @@
+// Gifting Ops - Prisma Schema
+// Full production schema for bulk gifting / corporate order management
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // DIRECT_URL bypasses PgBouncer for Prisma migrations.
+  // Required when DATABASE_URL points to Supabase's Transaction Pooler (port 6543).
+  // Leave unset if using a direct connection or local PostgreSQL.
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── ENUMS ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  OWNER
+  SALES
+  CHEF_OPS
+  PRODUCTION
+  PACKING
+  QC
+  DISPATCH
+  ACCOUNTS
+  STORE
+  VENDOR
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  SAMPLE_SENT
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum EventType {
+  DIWALI
+  CORPORATE
+  WEDDING
+  BIRTHDAY
+  CUSTOM
+  CHRISTMAS
+  EID
+  HOLI
+  OTHER
+}
+
+enum SampleStatus {
+  REQUESTED
+  IN_KITCHEN
+  READY
+  DELIVERED
+  APPROVED
+  NEEDS_CHANGES
+  CLOSED
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CONVERTED
+  EXPIRED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVISED
+}
+
+enum OrderStatus {
+  CONFIRMED
+  ADVANCE_PENDING
+  IN_PRODUCTION
+  PACKING
+  QC_PENDING
+  QC_PASSED
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+  ON_HOLD
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  REFUNDED
+}
+
+enum PaymentType {
+  ADVANCE
+  BALANCE
+  FULL
+  REFUND
+}
+
+enum ProductionStatus {
+  SCHEDULED
+  IN_PROGRESS
+  PAUSED
+  COMPLETED
+  DELAYED
+}
+
+enum PackingStatus {
+  PENDING
+  IN_PROGRESS
+  PACKED
+  QC_PENDING
+  APPROVED
+  REJECTED
+}
+
+enum QCResult {
+  PASS
+  FAIL_PACKING
+  FAIL_PRODUCT
+}
+
+enum DispatchStatus {
+  PENDING
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+  RESCHEDULED
+}
+
+enum InventoryTxType {
+  IN
+  OUT
+  ADJUSTMENT
+  RETURN
+}
+
+enum VendorOrderStatus {
+  DRAFT
+  PLACED
+  CONFIRMED
+  PARTIAL_RECEIVED
+  RECEIVED
+  CANCELLED
+  DELAYED
+}
+
+enum NotificationType {
+  ORDER_DELAYED
+  QC_FAIL
+  VENDOR_LATE
+  ADVANCE_PENDING
+  BALANCE_DUE
+  RUSH_ORDER
+  MODIFICATION_ALERT
+  GENERAL
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WHATSAPP
+}
+
+// ─── CORE MODELS ──────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  password      String
+  phone         String?
+  role          Role      @default(SALES)
+  isActive      Boolean   @default(true)
+  avatar        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  leadsCreated       Lead[]             @relation("LeadCreatedBy")
+  leadsAssigned      Lead[]             @relation("LeadAssignedTo")
+  samplesRequested   Sample[]           @relation("SampleRequestedBy")
+  quotesCreated      Quote[]            @relation("QuoteCreatedBy")
+  ordersCreated      Order[]            @relation("OrderCreatedBy")
+  ordersAssigned     Order[]            @relation("OrderAssignedTo")
+  paymentsVerified   Payment[]          @relation("PaymentVerifiedBy")
+  productionBatches  ProductionBatch[]
+  qcLogs             QCLog[]
+  dispatches         Dispatch[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  discountApprovals  DiscountApproval[]
+  inventoryTxns      InventoryTransaction[]
+  feedbackCollected  Feedback[]
+
+  @@map("users")
+}
+
+model Lead {
+  id              String      @id @default(cuid())
+  companyName     String
+  contactPerson   String
+  phone           String
+  email           String?
+  requirementType String?
+  eventType       EventType   @default(OTHER)
+  expectedQty     Int?
+  budget          Float?
+  notes           String?
+  status          LeadStatus  @default(NEW)
+  source          String?
+  nextFollowUp    DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  createdById     String
+  assignedToId    String?
+
+  createdBy       User        @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  assignedTo      User?       @relation("LeadAssignedTo", fields: [assignedToId], references: [id])
+  samples         Sample[]
+  quotes          Quote[]
+  orders          Order[]
+  auditLogs       AuditLog[]
+
+  @@map("leads")
+}
+
+model Sample {
+  id              String       @id @default(cuid())
+  leadId          String?
+  clientName      String
+  requirements    String
+  quantity        Int          @default(1)
+  status          SampleStatus @default(REQUESTED)
+  clientFeedback  String?
+  rating          Int?
+  kitchenNotes    String?
+  deliveredAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  requestedById   String
+  requestedBy     User         @relation("SampleRequestedBy", fields: [requestedById], references: [id])
+  lead            Lead?        @relation(fields: [leadId], references: [id])
+  items           SampleItem[]
+
+  @@map("samples")
+}
+
+model SampleItem {
+  id          String   @id @default(cuid())
+  sampleId    String
+  productName String
+  description String?
+  quantity    Int      @default(1)
+
+  sample      Sample   @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+
+  @@map("sample_items")
+}
+
+model Quote {
+  id              String      @id @default(cuid())
+  quoteNumber     String      @unique
+  version         Int         @default(1)
+  leadId          String
+  clientName      String
+  companyName     String?
+  eventType       EventType   @default(OTHER)
+  expectedDate    DateTime?
+  validUntil      DateTime?
+  status          QuoteStatus @default(DRAFT)
+  subtotal        Float       @default(0)
+  discountPct     Float       @default(0)
+  discountAmt     Float       @default(0)
+  gstPct          Float       @default(18)
+  gstAmt          Float       @default(0)
+  packagingCost   Float       @default(0)
+  brandingCost    Float       @default(0)
+  deliveryCost    Float       @default(0)
+  totalAmount     Float       @default(0)
+  margin          Float       @default(0)
+  notes           String?
+  terms           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  createdById     String
+  createdBy       User        @relation("QuoteCreatedBy", fields: [createdById], references: [id])
+  lead            Lead        @relation(fields: [leadId], references: [id])
+  items           QuoteItem[]
+  discountApprovals DiscountApproval[]
+  orders          Order[]
+
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id              String   @id @default(cuid())
+  quoteId         String
+  productName     String
+  description     String?
+  sku             String?
+  quantity        Int
+  unitPrice       Float
+  totalPrice      Float
+  packagingType   String?
+  brandingNotes   String?
+
+  quote           Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@map("quote_items")
+}
+
+model DiscountApproval {
+  id              String         @id @default(cuid())
+  quoteId         String
+  requestedBy     String
+  discountPct     Float
+  reason          String
+  status          ApprovalStatus @default(PENDING)
+  approvedBy      String?
+  approvalNotes   String?
+  revisedPct      Float?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  quote           Quote          @relation(fields: [quoteId], references: [id])
+  requester       User           @relation(fields: [requestedBy], references: [id])
+
+  @@map("discount_approvals")
+}
+
+model Order {
+  id                  String      @id @default(cuid())
+  orderNumber         String      @unique
+  leadId              String
+  quoteId             String?
+  clientName          String
+  companyName         String?
+  eventType           EventType   @default(OTHER)
+  deliveryDate        DateTime
+  isRushOrder         Boolean     @default(false)
+  rushOrderNotes      String?
+  status              OrderStatus @default(CONFIRMED)
+  paymentStatus       PaymentStatus @default(PENDING)
+  totalAmount         Float
+  advanceAmount       Float       @default(0)
+  balanceAmount       Float       @default(0)
+  gstAmount           Float       @default(0)
+
+  // Customization
+  cardMessage         String?
+  ribbonColor         String?
+  logoPlacement       String?
+  brandingNotes       String?
+  dietaryNotes        String?
+  packagingNotes      String?
+
+  // Ops
+  productionStartDate DateTime?
+  productionDeadline  DateTime?
+  internalNotes       String?
+  modificationNotes   String?
+  modificationAt      DateTime?
+
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  createdById         String
+  assignedToId        String?
+
+  lead                Lead        @relation(fields: [leadId], references: [id])
+  quote               Quote?      @relation(fields: [quoteId], references: [id])
+  createdBy           User        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  assignedTo          User?       @relation("OrderAssignedTo", fields: [assignedToId], references: [id])
+  items               OrderItem[]
+  deliveryAddresses   DeliveryAddress[]
+  payments            Payment[]
+  productionBatches   ProductionBatch[]
+  packingUnits        PackingUnit[]
+  qcLogs              QCLog[]
+  dispatches          Dispatch[]
+  invoices            Invoice[]
+  feedback            Feedback[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id              String   @id @default(cuid())
+  orderId         String
+  productName     String
+  sku             String?
+  quantity        Int
+  unitPrice       Float
+  totalPrice      Float
+  packagingType   String?
+  brandingNotes   String?
+  recipeNotes     String?
+
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+model DeliveryAddress {
+  id              String   @id @default(cuid())
+  orderId         String
+  label           String?
+  recipientName   String
+  phone           String
+  addressLine1    String
+  addressLine2    String?
+  city            String
+  state           String
+  pincode         String
+  quantity        Int      @default(1)
+  specialInstructions String?
+
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dispatches      Dispatch[]
+
+  @@map("delivery_addresses")
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  orderId         String
+  type            PaymentType
+  amount          Float
+  transactionId   String?
+  screenshotUrl   String?
+  notes           String?
+  verifiedAt      DateTime?
+  receiptUrl      String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  verifiedById    String?
+  verifiedBy      User?         @relation("PaymentVerifiedBy", fields: [verifiedById], references: [id])
+  order           Order         @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
+
+// ─── OPERATIONS MODELS ────────────────────────────────────────────────────────
+
+model ProductionBatch {
+  id              String           @id @default(cuid())
+  batchNumber     String           @unique
+  orderId         String
+  productName     String
+  quantity        Int
+  status          ProductionStatus @default(SCHEDULED)
+  scheduledDate   DateTime
+  deadline        DateTime
+  completedAt     DateTime?
+  notes           String?
+  shortages       String?
+  priority        Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  assignedToId    String?
+  assignedTo      User?            @relation(fields: [assignedToId], references: [id])
+  order           Order            @relation(fields: [orderId], references: [id])
+  ingredients     BatchIngredient[]
+
+  @@map("production_batches")
+}
+
+model BatchIngredient {
+  id              String          @id @default(cuid())
+  batchId         String
+  inventoryItemId String
+  quantityNeeded  Float
+  quantityUsed    Float           @default(0)
+  unit            String
+
+  batch           ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem   @relation(fields: [inventoryItemId], references: [id])
+
+  @@map("batch_ingredients")
+}
+
+model InventoryItem {
+  id              String   @id @default(cuid())
+  name            String
+  sku             String?  @unique
+  category        String
+  unit            String
+  currentStock    Float    @default(0)
+  minStockLevel   Float    @default(0)
+  reorderPoint    Float    @default(0)
+  costPerUnit     Float    @default(0)
+  location        String?
+  notes           String?
+  imageUrl        String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  transactions    InventoryTransaction[]
+  batchIngredients BatchIngredient[]
+  vendorItems     VendorOrderItem[]
+
+  @@map("inventory_items")
+}
+
+model InventoryTransaction {
+  id              String           @id @default(cuid())
+  inventoryItemId String
+  type            InventoryTxType
+  quantity        Float
+  balanceAfter    Float
+  unit            String
+  referenceId     String?
+  referenceType   String?
+  notes           String?
+  createdAt       DateTime         @default(now())
+
+  performedById   String
+  performedBy     User             @relation(fields: [performedById], references: [id])
+  inventoryItem   InventoryItem    @relation(fields: [inventoryItemId], references: [id])
+
+  @@map("inventory_transactions")
+}
+
+// ─── VENDOR MODELS ────────────────────────────────────────────────────────────
+
+model Vendor {
+  id              String   @id @default(cuid())
+  name            String
+  companyName     String?
+  email           String?  @unique
+  phone           String
+  address         String?
+  gstNumber       String?
+  category        String?
+  rating          Float    @default(0)
+  notes           String?
+  isActive        Boolean  @default(true)
+  portalAccess    Boolean  @default(false)
+  portalPassword  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  purchaseOrders  VendorOrder[]
+
+  @@map("vendors")
+}
+
+model VendorOrder {
+  id              String            @id @default(cuid())
+  poNumber        String            @unique
+  vendorId        String
+  status          VendorOrderStatus @default(DRAFT)
+  expectedDate    DateTime
+  receivedDate    DateTime?
+  totalAmount     Float             @default(0)
+  notes           String?
+  vendorNotes     String?
+  delayReason     String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  vendor          Vendor            @relation(fields: [vendorId], references: [id])
+  items           VendorOrderItem[]
+
+  @@map("vendor_orders")
+}
+
+model VendorOrderItem {
+  id              String        @id @default(cuid())
+  vendorOrderId   String
+  inventoryItemId String?
+  itemName        String
+  quantity        Float
+  receivedQty     Float         @default(0)
+  unit            String
+  unitPrice       Float
+  totalPrice      Float
+
+  vendorOrder     VendorOrder   @relation(fields: [vendorOrderId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+
+  @@map("vendor_order_items")
+}
+
+// ─── PACKING & QC MODELS ─────────────────────────────────────────────────────
+
+model PackingUnit {
+  id              String        @id @default(cuid())
+  orderId         String
+  unitNumber      Int
+  status          PackingStatus @default(PENDING)
+  boxType         String?
+  recipientName   String?
+
+  // Checklist
+  correctBox      Boolean       @default(false)
+  productArranged Boolean       @default(false)
+  ribbonAdded     Boolean       @default(false)
+  brandingDone    Boolean       @default(false)
+  insertsAdded    Boolean       @default(false)
+  labelAttached   Boolean       @default(false)
+
+  packedAt        DateTime?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  order           Order         @relation(fields: [orderId], references: [id])
+  qcLogs          QCLog[]
+
+  @@map("packing_units")
+}
+
+model QCLog {
+  id              String     @id @default(cuid())
+  orderId         String
+  packingUnitId   String?
+  result          QCResult   @default(PASS)
+
+  // Checks
+  productQuality  Boolean    @default(true)
+  appearance      Boolean    @default(true)
+  branding        Boolean    @default(true)
+  quantityCorrect Boolean    @default(true)
+  sealed          Boolean    @default(true)
+  labelCorrect    Boolean    @default(true)
+
+  failureReason   String?
+  actionTaken     String?
+  images          String[]
+  createdAt       DateTime   @default(now())
+
+  inspectedById   String
+  inspectedBy     User       @relation(fields: [inspectedById], references: [id])
+  order           Order      @relation(fields: [orderId], references: [id])
+  packingUnit     PackingUnit? @relation(fields: [packingUnitId], references: [id])
+
+  @@map("qc_logs")
+}
+
+// ─── DISPATCH MODELS ─────────────────────────────────────────────────────────
+
+model Dispatch {
+  id                  String          @id @default(cuid())
+  orderId             String
+  deliveryAddressId   String?
+  challanNumber       String          @unique
+  status              DispatchStatus  @default(PENDING)
+  vehicleNumber       String?
+  driverName          String?
+  driverPhone         String?
+  estimatedDelivery   DateTime?
+  dispatchedAt        DateTime?
+  deliveredAt         DateTime?
+  failureReason       String?
+  rescheduledTo       DateTime?
+
+  // POD
+  podPhotoUrl         String?
+  podSignatureUrl     String?
+  podReceiverName     String?
+  podTimestamp        DateTime?
+  podNotes            String?
+
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  dispatchedById      String?
+  dispatchedBy        User?           @relation(fields: [dispatchedById], references: [id])
+  order               Order           @relation(fields: [orderId], references: [id])
+  deliveryAddress     DeliveryAddress? @relation(fields: [deliveryAddressId], references: [id])
+
+  @@map("dispatches")
+}
+
+// ─── ACCOUNTS MODELS ─────────────────────────────────────────────────────────
+
+model Invoice {
+  id              String   @id @default(cuid())
+  invoiceNumber   String   @unique
+  orderId         String
+  clientName      String
+  companyName     String?
+  subtotal        Float
+  gstAmt          Float
+  gstPct          Float    @default(18)
+  totalAmount     Float
+  paidAmount      Float    @default(0)
+  balanceAmount   Float    @default(0)
+  status          PaymentStatus @default(PENDING)
+  dueDate         DateTime?
+  pdfUrl          String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  order           Order    @relation(fields: [orderId], references: [id])
+
+  @@map("invoices")
+}
+
+// ─── FEEDBACK MODEL ───────────────────────────────────────────────────────────
+
+model Feedback {
+  id              String   @id @default(cuid())
+  orderId         String
+  clientName      String
+  overallRating   Int
+  tasteRating     Int?
+  packagingRating Int?
+  deliveryRating  Int?
+  comments        String?
+  repeatInterest  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  collectedById   String
+  collectedBy     User     @relation(fields: [collectedById], references: [id])
+  order           Order    @relation(fields: [orderId], references: [id])
+
+  @@map("feedback")
+}
+
+// ─── NOTIFICATIONS & AUDIT ────────────────────────────────────────────────────
+
+model Notification {
+  id          String              @id @default(cuid())
+  userId      String
+  orderId     String?
+  type        NotificationType
+  channel     NotificationChannel @default(IN_APP)
+  title       String
+  message     String
+  isRead      Boolean             @default(false)
+  readAt      DateTime?
+  link        String?
+  createdAt   DateTime            @default(now())
+
+  user        User                @relation(fields: [userId], references: [id])
+  order       Order?              @relation(fields: [orderId], references: [id])
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  orderId     String?
+  leadId      String?
+  entity      String
+  entityId    String
+  action      String
+  oldValues   Json?
+  newValues   Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+  order       Order?   @relation(fields: [orderId], references: [id])
+  lead        Lead?    @relation(fields: [leadId], references: [id])
+
+  @@map("audit_logs")
+}
