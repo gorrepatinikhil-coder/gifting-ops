@@ -145,7 +145,7 @@ export async function POST(req: NextRequest) {
         companyName: clientCompany ?? orderData.companyName ?? orderData.clientName,
         contactPerson: orderData.clientName,
         phone: clientPhone ?? "",
-        email: clientEmail,
+        email: clientEmail || undefined,
         status: "WON",
         source: "Direct",
         createdById: session.user.id,
@@ -154,35 +154,50 @@ export async function POST(req: NextRequest) {
     resolvedLeadId = lead.id;
   }
 
-  const order = await prisma.order.create({
-    data: {
-      ...orderData,
-      leadId: resolvedLeadId,
-      companyName: clientCompany ?? orderData.companyName,
-      orderNumber,
-      eventType: (eventType as never) ?? "OTHER",
-      totalAmount,
-      balanceAmount,
-      deliveryDate: new Date(orderData.deliveryDate),
-      isRushOrder: isRush || orderData.isRushOrder,
-      paymentStatus: (orderData.advanceAmount ?? 0) > 0 ? "PARTIAL" : "PENDING",
-      internalNotes: notes ?? orderData.internalNotes,
-      createdById: session.user.id,
-      items: items ? {
-        create: items.map((i) => ({
-          productName: i.productName,
-          description: i.description,
-          sku: i.sku,
-          quantity: i.quantity,
-          unitPrice: i.unitPrice,
-          totalPrice: i.totalPrice,
-          packagingType: i.packaging ?? i.packagingType,
-          brandingNotes: i.branding ?? i.brandingNotes,
-        })),
-      } : undefined,
-      deliveryAddresses: normalizedAddresses ? { create: normalizedAddresses } : undefined,
-    },
-  });
+  let order;
+  try {
+    order = await prisma.order.create({
+      data: {
+        leadId: resolvedLeadId,
+        quoteId: orderData.quoteId,
+        clientName: orderData.clientName,
+        companyName: clientCompany ?? orderData.companyName,
+        orderNumber,
+        eventType: (eventType as never) ?? "OTHER",
+        totalAmount,
+        balanceAmount,
+        deliveryDate: new Date(orderData.deliveryDate),
+        isRushOrder: isRush || orderData.isRushOrder || false,
+        paymentStatus: (orderData.advanceAmount ?? 0) > 0 ? "PARTIAL" : "PENDING",
+        advanceAmount: orderData.advanceAmount ?? 0,
+        gstAmount: orderData.gstAmount ?? 0,
+        cardMessage: orderData.cardMessage,
+        ribbonColor: orderData.ribbonColor,
+        logoPlacement: orderData.logoPlacement,
+        brandingNotes: orderData.brandingNotes,
+        dietaryNotes: orderData.dietaryNotes,
+        packagingNotes: orderData.packagingNotes,
+        internalNotes: notes || orderData.internalNotes,
+        createdById: session.user.id,
+        items: items ? {
+          create: items.map((i) => ({
+            productName: i.productName,
+            description: i.description || undefined,
+            sku: i.sku || undefined,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            totalPrice: i.totalPrice,
+            packagingType: i.packaging || i.packagingType || undefined,
+            brandingNotes: i.branding || i.brandingNotes || undefined,
+          })),
+        } : undefined,
+        deliveryAddresses: normalizedAddresses ? { create: normalizedAddresses } : undefined,
+      },
+    });
+  } catch (err) {
+    console.error("Order create error:", err);
+    return NextResponse.json({ error: "Failed to create order", details: String(err) }, { status: 500 });
+  }
 
   if (order.isRushOrder) {
     await notifyRushOrder(order.id, order.orderNumber);
