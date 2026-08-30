@@ -123,6 +123,14 @@ async function main() {
   ]);
   console.log("✅  Vendors (4)");
 
+  // Guard: skip demo data if quotes already exist (idempotent re-runs)
+  const alreadySeeded = (await prisma.quote.count()) > 0;
+  if (alreadySeeded) {
+    console.log("⏭️  Demo data already seeded — skipping leads, quotes, orders, and downstream records.");
+    console.log("   (Run prisma migrate reset --force && npm run db:seed to re-seed from scratch)\n");
+    return;
+  }
+
   // ── Leads ──────────────────────────────────────────────────────────────────
   const [l1, l2, l3, l4, l5, l6, l7, l8] = await Promise.all([
     mkLead(sales.id, "TechNova Pvt Ltd",       "Rahul Verma",   "+91 98765 10001", "rahul@technova.in",      "DIWALI",    285000, "WON",         "150 premium hampers for employees. Needs branding with logo."),
