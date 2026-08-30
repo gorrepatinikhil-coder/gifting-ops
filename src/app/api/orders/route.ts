@@ -9,16 +9,23 @@ import { hasPermission } from "@/lib/permissions";
 import type { Role } from "@prisma/client";
 
 const createOrderSchema = z.object({
-  leadId: z.string(),
+  leadId: z.string().optional(),
   quoteId: z.string().optional(),
   clientName: z.string().min(1),
+  clientPhone: z.string().optional(),
+  clientEmail: z.string().optional(),
   companyName: z.string().optional(),
+  clientCompany: z.string().optional(),
   eventType: z.string().optional(),
   deliveryDate: z.string(),
-  totalAmount: z.coerce.number(),
+  totalAmount: z.coerce.number().optional(),
   gstAmount: z.coerce.number().default(0),
   advanceAmount: z.coerce.number().default(0),
+  advanceRequired: z.coerce.number().default(0),
+  isRush: z.boolean().default(false),
   isRushOrder: z.boolean().default(false),
+  notes: z.string().optional(),
+  specialInstructions: z.string().optional(),
   cardMessage: z.string().optional(),
   ribbonColor: z.string().optional(),
   logoPlacement: z.string().optional(),
@@ -28,13 +35,25 @@ const createOrderSchema = z.object({
   internalNotes: z.string().optional(),
   items: z.array(z.object({
     productName: z.string(),
+    description: z.string().optional(),
     sku: z.string().optional(),
     quantity: z.coerce.number(),
     unitPrice: z.coerce.number(),
     totalPrice: z.coerce.number(),
+    packaging: z.string().optional(),
+    branding: z.string().optional(),
     packagingType: z.string().optional(),
     brandingNotes: z.string().optional(),
   })).optional(),
+  deliveryAddress: z.object({
+    address: z.string(),
+    city: z.string(),
+    state: z.string().optional(),
+    pincode: z.string(),
+    landmark: z.string().optional(),
+    contactName: z.string().optional(),
+    contactPhone: z.string().optional(),
+  }).optional(),
   deliveryAddresses: z.array(z.object({
     recipientName: z.string(),
     phone: z.string(),
@@ -90,21 +109,78 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Validation error", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { items, deliveryAddresses, eventType, ...orderData } = parsed.data;
+  const {
+    items, deliveryAddresses, deliveryAddress,
+    eventType, isRush, clientPhone, clientEmail, clientCompany,
+    notes, specialInstructions, advanceRequired,
+    totalAmount: providedTotal,
+    ...orderData
+  } = parsed.data;
+
   const orderNumber = generateOrderNumber();
-  const balanceAmount = orderData.totalAmount - orderData.advanceAmount;
+
+  // Compute total from items if not explicitly provided
+  const totalAmount = providedTotal ??
+    (items ?? []).reduce((sum, i) => sum + i.totalPrice, 0);
+  const balanceAmount = totalAmount - (orderData.advanceAmount ?? 0);
+
+  // Normalise delivery addresses: form sends a single deliveryAddress object
+  const normalizedAddresses = deliveryAddresses ??
+    (deliveryAddress ? [{
+      recipientName: deliveryAddress.contactName ?? orderData.clientName,
+      phone: deliveryAddress.contactPhone ?? clientPhone ?? "",
+      addressLine1: deliveryAddress.address,
+      addressLine2: deliveryAddress.landmark,
+      city: deliveryAddress.city,
+      state: deliveryAddress.state ?? "",
+      pincode: deliveryAddress.pincode,
+      quantity: 1,
+    }] : undefined);
+
+  // leadId is required on the Order model — auto-create a walk-in lead if none provided
+  let resolvedLeadId = orderData.leadId;
+  if (!resolvedLeadId) {
+    const lead = await prisma.lead.create({
+      data: {
+        companyName: clientCompany ?? orderData.companyName ?? orderData.clientName,
+        contactPerson: orderData.clientName,
+        phone: clientPhone ?? "",
+        email: clientEmail,
+        status: "WON",
+        source: "Direct",
+        createdById: session.user.id,
+      },
+    });
+    resolvedLeadId = lead.id;
+  }
 
   const order = await prisma.order.create({
     data: {
       ...orderData,
+      leadId: resolvedLeadId,
+      companyName: clientCompany ?? orderData.companyName,
       orderNumber,
       eventType: (eventType as never) ?? "OTHER",
+      totalAmount,
       balanceAmount,
       deliveryDate: new Date(orderData.deliveryDate),
-      paymentStatus: orderData.advanceAmount > 0 ? "PARTIAL" : "PENDING",
+      isRushOrder: isRush || orderData.isRushOrder,
+      paymentStatus: (orderData.advanceAmount ?? 0) > 0 ? "PARTIAL" : "PENDING",
+      internalNotes: notes ?? orderData.internalNotes,
       createdById: session.user.id,
-      items: items ? { create: items } : undefined,
-      deliveryAddresses: deliveryAddresses ? { create: deliveryAddresses } : undefined,
+      items: items ? {
+        create: items.map((i) => ({
+          productName: i.productName,
+          description: i.description,
+          sku: i.sku,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          totalPrice: i.totalPrice,
+          packagingType: i.packaging ?? i.packagingType,
+          brandingNotes: i.branding ?? i.brandingNotes,
+        })),
+      } : undefined,
+      deliveryAddresses: normalizedAddresses ? { create: normalizedAddresses } : undefined,
     },
   });
 
