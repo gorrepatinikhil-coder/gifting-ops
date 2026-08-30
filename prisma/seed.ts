@@ -750,7 +750,7 @@ async function main() {
 function upsertUser(email: string, password: string, name: string, role: string, phone: string) {
   return prisma.user.upsert({
     where: { email },
-    update: {},
+    update: { password, name },
     create: { email, password, name, role: role as never, phone },
   });
 }
