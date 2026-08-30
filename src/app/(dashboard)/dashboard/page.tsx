@@ -127,7 +127,7 @@ export default async function DashboardPage() {
             clientName: l.clientName,
             companyName: l.companyName,
             status: l.status,
-            estimatedValue: l.budget ?? 0,
+            estimatedValue: l.budget ? Number(l.budget) : 0,
             requirement: l.requirementType ?? undefined,
           })),
         }}
