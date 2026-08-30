@@ -82,6 +82,7 @@ export default async function DashboardPage() {
         take: 10,
         select: {
           id: true,
+          clientName: true,
           companyName: true,
           status: true,
           budget: true,
@@ -121,7 +122,14 @@ export default async function DashboardPage() {
             monthlyRevenue: monthlyRevenueAgg._sum.totalAmount ?? 0,
           },
           recentOrders: recentOrders as any,
-          leads: leads as any,
+          leads: leads.map((l) => ({
+            id: l.id,
+            clientName: l.clientName,
+            companyName: l.companyName,
+            status: l.status,
+            estimatedValue: l.budget ?? 0,
+            requirement: l.requirementType ?? undefined,
+          })),
         }}
       />
     );
