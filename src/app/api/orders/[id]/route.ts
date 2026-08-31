@@ -44,6 +44,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       },
       invoices: { orderBy: { createdAt: "desc" } },
       feedback: true,
+      auditLogs: {
+        orderBy: { createdAt: "desc" },
+        include: { user: { select: { id: true, name: true } } },
+      },
     },
   });
 
