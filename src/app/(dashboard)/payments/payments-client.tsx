@@ -282,7 +282,7 @@ export function PaymentsClient({ payments }: PaymentsClientProps) {
                           "text-[13px]",
                           isOverdue ? "text-red-600 font-medium" : "text-foreground"
                         )}>
-                          {formatDate(payment.dueDate)}
+                          {payment.dueDate ? formatDate(payment.dueDate) : "—"}
                         </p>
                         {payment.paidAt && (
                           <p className="text-xs text-muted-foreground">

@@ -168,7 +168,7 @@ export function AccountsDashboard({ data }: AccountsDashboardProps) {
                           : "text-muted-foreground"
                       }`}
                     >
-                      {formatDate(payment.dueDate)}
+                      {payment.dueDate ? formatDate(payment.dueDate) : "—"}
                     </span>
                   </div>
                 </Link>
