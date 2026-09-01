@@ -91,7 +91,8 @@ export function PaymentsClient({ payments }: PaymentsClientProps) {
     .reduce((s, p) => s + p.amount, 0);
   const pendingCount = localPayments.filter((p) => ["PENDING", "PARTIAL"].includes(p.status)).length;
 
-  const handleMarkPaid = (paymentId: string) => {
+  const handleMarkPaid = async (paymentId: string) => {
+    const snapshot = localPayments;
     setLocalPayments((prev) =>
       prev.map((p) =>
         p.id === paymentId
@@ -99,7 +100,17 @@ export function PaymentsClient({ payments }: PaymentsClientProps) {
           : p
       )
     );
-    toast.success("Payment marked as received.");
+    try {
+      const res = await fetch(`/api/payments/${paymentId}/verify`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to verify payment");
+      }
+      toast.success("Payment marked as received.");
+    } catch (e) {
+      setLocalPayments(snapshot);
+      toast.error(e instanceof Error ? e.message : "Failed to mark payment as paid");
+    }
   };
 
   return (

@@ -72,19 +72,45 @@ export function SettingsClient({ currentUser, users: initialUsers, userRole }: P
   const handleProfileSave = async () => {
     if (!profile.name) return toast.error("Name is required");
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 400));
-    toast.success("Profile updated successfully");
-    setSaving(false);
+    try {
+      const res = await fetch(`/api/users/${currentUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: profile.name.trim(), phone: profile.phone.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to update profile");
+      }
+      toast.success("Profile updated successfully");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update profile");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handlePasswordChange = async () => {
     if (pwForm.newPassword.length < 8) return toast.error("Password must be at least 8 characters");
     if (pwForm.newPassword !== pwForm.confirm) return toast.error("Passwords do not match");
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 400));
-    toast.success("Password changed successfully");
-    setPwForm({ currentPassword: "", newPassword: "", confirm: "" });
-    setSaving(false);
+    try {
+      const res = await fetch(`/api/users/${currentUser.id}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: pwForm.currentPassword, newPassword: pwForm.newPassword }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to change password");
+      }
+      toast.success("Password changed successfully");
+      setPwForm({ currentPassword: "", newPassword: "", confirm: "" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to change password");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleAddUser = async () => {
@@ -93,31 +119,61 @@ export function SettingsClient({ currentUser, users: initialUsers, userRole }: P
     }
     if (newUser.password.length < 8) return toast.error("Password must be at least 8 characters");
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 400));
-    const created: MockUser = {
-      id: `usr-${Date.now()}`,
-      name: newUser.name,
-      email: newUser.email,
-      role: newUser.role,
-      phone: newUser.phone,
-      isActive: true,
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-    setUsers((prev) => [...prev, created]);
-    setAddOpen(false);
-    setNewUser({ name: "", email: "", password: "", role: "SALES", phone: "" });
-    toast.success("User created successfully");
-    setSaving(false);
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newUser.name.trim(),
+          email: newUser.email.trim(),
+          password: newUser.password,
+          role: newUser.role,
+          phone: newUser.phone.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to create user");
+      }
+      const created = await res.json();
+      const newMockUser: MockUser = {
+        id: created.id,
+        name: created.name,
+        email: created.email,
+        role: created.role,
+        phone: created.phone ?? "",
+        isActive: created.isActive,
+        createdAt: created.createdAt ? new Date(created.createdAt).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      };
+      setUsers((prev) => [...prev, newMockUser]);
+      setAddOpen(false);
+      setNewUser({ name: "", email: "", password: "", role: "SALES", phone: "" });
+      toast.success("User created successfully");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create user");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleActive = async (userId: string, isActive: boolean) => {
     setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, isActive } : u));
     toast.success(isActive ? "User activated" : "User deactivated");
+    fetch(`/api/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive }),
+    }).catch(() => console.error("Failed to persist user active state"));
   };
 
   const handleRoleChange = async (userId: string, role: string) => {
     setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, role: role as Role } : u));
     toast.success("Role updated");
+    fetch(`/api/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    }).catch(() => console.error("Failed to persist role change"));
   };
 
   const avatarBg = "bg-gradient-to-br from-brand-400 to-brand-600";

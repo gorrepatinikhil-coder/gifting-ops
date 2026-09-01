@@ -67,10 +67,32 @@ export function FeedbackClient({ feedback, pendingFeedback, currentUser }: Feedb
   const submitFeedback = async () => {
     if (!showCollect) return;
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 500));
-    toast.success("Feedback saved! Thank you.");
-    setShowCollect(null);
-    setSaving(false);
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: showCollect,
+          overallRating: Number(form.overallRating),
+          tasteRating: Number(form.tasteRating),
+          packagingRating: Number(form.packagingRating),
+          deliveryRating: Number(form.deliveryRating),
+          comments: form.comments || undefined,
+          repeatInterest: form.repeatInterest,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to save feedback");
+      }
+      toast.success("Feedback saved! Thank you.");
+      setShowCollect(null);
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save feedback");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const avgRating = feedback.length > 0

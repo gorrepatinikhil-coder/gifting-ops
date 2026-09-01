@@ -279,6 +279,25 @@ export function QCClient({
     } else {
       toast.error(`Unit #${unitNumber} failed — routed back to Production.`);
     }
+
+    const order = orders.find((o) => o.id === orderId);
+    fetch("/api/qc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId,
+        packingUnitId: unitId,
+        result,
+        productQuality: checks.freshness,
+        appearance: checks.appearance && checks.ribbon,
+        branding: checks.branding,
+        quantityCorrect: checks.quantity,
+        sealed: checks.boxIntact,
+        labelCorrect: checks.nameCard && checks.label,
+        failureReason: result !== "PASS" ? failureReason : undefined,
+        actionTaken: actionTaken || undefined,
+      }),
+    }).catch(() => console.error(`Failed to persist QC inspection for order ${order?.orderNumber}`));
   };
 
   const approveOrder = (orderId: string) => {

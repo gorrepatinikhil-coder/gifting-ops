@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -18,7 +18,7 @@ import {
   FileText,
   Edit,
 } from "lucide-react";
-import { MOCK_QUOTES, type MockQuote } from "@/lib/mock-data";
+import type { MockQuote } from "@/lib/mock-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,43 @@ function amountInWords(amount: number): string {
   if (paise > 0) result += " and " + numToWords(paise) + " Paise";
   result += " Only";
   return result;
+}
+
+// ─── API → MockQuote mapper ────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapApiQuote(data: any): MockQuote {
+  return {
+    id: data.id,
+    quoteNumber: data.quoteNumber,
+    clientName: data.clientName ?? data.lead?.contactPerson ?? "",
+    clientEmail: data.lead?.email ?? "",
+    clientPhone: data.lead?.phone ?? undefined,
+    clientCompany: data.companyName ?? data.lead?.companyName ?? "",
+    eventType: data.eventType ?? "OTHER",
+    validUntil: data.validUntil ? new Date(data.validUntil) : new Date(),
+    subtotal: data.subtotal ?? 0,
+    totalDiscount: data.discountAmt ?? 0,
+    totalGst: data.gstAmt ?? 0,
+    deliveryCharge: data.deliveryCost ?? 0,
+    packagingCharge: data.packagingCost ?? 0,
+    brandingCharge: data.brandingCost ?? 0,
+    grandTotal: data.totalAmount ?? 0,
+    status: data.status ?? "DRAFT",
+    notes: data.notes ?? undefined,
+    terms: data.terms ?? undefined,
+    createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+    createdBy: data.createdBy ? { name: data.createdBy.name } : undefined,
+    approvedBy: null,
+    items: (data.items ?? []).map((item: { productName: string; description?: string; quantity: number; unitPrice: number; totalPrice?: number }) => ({
+      productName: item.productName,
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      discount: 0,
+      gstRate: data.gstPct ?? 18,
+    })),
+  };
 }
 
 // ─── QuoteNotFound ─────────────────────────────────────────────────────────────
@@ -113,34 +150,31 @@ function QuoteDetailView({ quote }: { quote: MockQuote }) {
       : "0";
 
   const handleAction = (action: string) => {
-    switch (action) {
-      case "submit":
-        setStatus("PENDING_APPROVAL");
-        toast.success("Submitted for approval");
-        break;
-      case "approve":
-        setStatus("APPROVED");
-        toast.success("Quotation approved");
-        break;
-      case "reject":
-        setStatus("REJECTED");
-        toast.error("Quotation rejected");
-        break;
-      case "send":
-        setStatus("SENT");
-        toast.success("Quotation sent to client");
-        break;
-      case "accept":
-        setStatus("ACCEPTED");
-        toast.success("Marked as accepted");
-        break;
-      case "mark-rejected":
-        setStatus("REJECTED");
-        toast.error("Marked as rejected");
-        break;
-      default:
-        break;
-    }
+    const statusMap: Record<string, string> = {
+      submit: "PENDING_APPROVAL",
+      approve: "APPROVED",
+      reject: "REJECTED",
+      send: "SENT",
+      accept: "ACCEPTED",
+      "mark-rejected": "REJECTED",
+    };
+    const toastMap: Record<string, { fn: typeof toast.success; msg: string }> = {
+      submit: { fn: toast.success, msg: "Submitted for approval" },
+      approve: { fn: toast.success, msg: "Quotation approved" },
+      reject: { fn: toast.error, msg: "Quotation rejected" },
+      send: { fn: toast.success, msg: "Quotation sent to client" },
+      accept: { fn: toast.success, msg: "Marked as accepted" },
+      "mark-rejected": { fn: toast.error, msg: "Marked as rejected" },
+    };
+    const newStatus = statusMap[action];
+    if (!newStatus) return;
+    setStatus(newStatus);
+    toastMap[action].fn(toastMap[action].msg);
+    fetch(`/api/quotations/${quote.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    }).catch(() => console.error("Failed to persist quotation status"));
   };
 
   const renderActionButtons = () => {
@@ -623,8 +657,22 @@ export default function QuotationDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const quote = MOCK_QUOTES.find((q) => q.id === id);
+  const [quote, setQuote] = useState<MockQuote | null | "loading">("loading");
 
+  useEffect(() => {
+    fetch(`/api/quotations/${id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setQuote(data ? mapApiQuote(data) : null))
+      .catch(() => setQuote(null));
+  }, [id]);
+
+  if (quote === "loading") {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-muted-foreground text-sm">Loading quotation…</div>
+      </div>
+    );
+  }
   if (!quote) return <QuoteNotFound />;
   return <QuoteDetailView quote={quote} />;
 }

@@ -110,7 +110,7 @@ export function ProductionClient({
   const update = (id: string, patch: Partial<BatchState>) =>
     setBatchStates((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
 
-  const handleStatus = (batch: ProductionBatch, next: ProductionStatus) => {
+  const handleStatus = async (batch: ProductionBatch, next: ProductionStatus) => {
     const patch: Partial<BatchState> = { status: next };
     if (next === "COMPLETED") patch.completedQty = batch.quantity;
     if (next === "IN_PROGRESS" && getBatch(batch.id).completedQty === 0)
@@ -124,6 +124,11 @@ export function ProductionClient({
       SCHEDULED: "Reset to scheduled.",
     };
     toast.success(labels[next] ?? "Status updated.");
+    fetch(`/api/production/${batch.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: next }),
+    }).catch(() => console.error("Failed to persist production status"));
   };
 
   const handleQtyUpdate = (batch: ProductionBatch) => {
@@ -134,14 +139,25 @@ export function ProductionClient({
     update(batch.id, { completedQty: n });
     setQtyEditing((p) => { const c = { ...p }; delete c[batch.id]; return c; });
     toast.success(`Progress updated — ${n}/${batch.quantity} complete.`);
+    fetch(`/api/production/${batch.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completedQty: n }),
+    }).catch(() => console.error("Failed to persist qty update"));
   };
 
   const addShortage = (id: string) => {
     const text = (shortageInputs[id] ?? "").trim();
     if (!text) return;
-    update(id, { shortages: [...getBatch(id).shortages, text] });
+    const updated = [...getBatch(id).shortages, text];
+    update(id, { shortages: updated });
     setShortageInputs((p) => ({ ...p, [id]: "" }));
     toast.warning("Shortage logged.");
+    fetch(`/api/production/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shortages: updated.join("\n") }),
+    }).catch(() => console.error("Failed to persist shortage"));
   };
 
   const resolveShortage = (id: string, i: number) => {
@@ -149,6 +165,11 @@ export function ProductionClient({
     s.splice(i, 1);
     update(id, { shortages: s });
     toast.success("Shortage resolved.");
+    fetch(`/api/production/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shortages: s.length > 0 ? s.join("\n") : null }),
+    }).catch(() => console.error("Failed to persist shortage resolution"));
   };
 
   // Derived counts

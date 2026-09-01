@@ -329,58 +329,99 @@ export function DispatchClient({ orders: rawOrders, currentUser }: DispatchClien
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  const createDispatch = (orderId: string) => {
+  const createDispatch = async (orderId: string) => {
     if (!dispatchForm.driverName.trim()) { toast.error("Driver name is required."); return; }
     if (!dispatchForm.vehicleNumber.trim()) { toast.error("Vehicle number is required."); return; }
 
-    const now = new Date();
-    const challanNumber = generateChallanNumber();
-    const newDispatch: DispatchRecord = {
-      id: tid(),
-      challanNumber,
-      status: "OUT_FOR_DELIVERY",
-      driverName: dispatchForm.driverName.trim(),
-      driverPhone: dispatchForm.driverPhone.trim(),
-      vehicleNumber: dispatchForm.vehicleNumber.trim().toUpperCase(),
-      estimatedDelivery: dispatchForm.estimatedDelivery ? new Date(dispatchForm.estimatedDelivery) : null,
-      dispatchedAt: now,
-      deliveredAt: null,
-      podReceiverName: null,
-      podTimestamp: null,
-      podNotes: null,
-      podPhotoName: null,
-      failureReason: null,
-      rescheduledTo: null,
-      timeline: [
-        {
-          id: tid(), time: now, event: "Dispatched",
-          detail: `Driver: ${dispatchForm.driverName} · Vehicle: ${dispatchForm.vehicleNumber.toUpperCase()}`,
-          actor: currentUser.role,
-        },
-      ],
-    };
+    try {
+      const res = await fetch("/api/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId,
+          driverName: dispatchForm.driverName.trim(),
+          driverPhone: dispatchForm.driverPhone.trim(),
+          vehicleNumber: dispatchForm.vehicleNumber.trim().toUpperCase(),
+          estimatedDelivery: dispatchForm.estimatedDelivery || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to create dispatch");
+      }
+      const created = await res.json();
+      const now = new Date(created.createdAt ?? Date.now());
+      const newDispatch: DispatchRecord = {
+        id: created.id,
+        challanNumber: created.challanNumber,
+        status: "OUT_FOR_DELIVERY",
+        driverName: created.driverName ?? dispatchForm.driverName.trim(),
+        driverPhone: created.driverPhone ?? dispatchForm.driverPhone.trim(),
+        vehicleNumber: created.vehicleNumber ?? dispatchForm.vehicleNumber.trim().toUpperCase(),
+        estimatedDelivery: created.estimatedDelivery ? new Date(created.estimatedDelivery) : null,
+        dispatchedAt: now,
+        deliveredAt: null,
+        podReceiverName: null,
+        podTimestamp: null,
+        podNotes: null,
+        podPhotoName: null,
+        failureReason: null,
+        rescheduledTo: null,
+        timeline: [
+          {
+            id: tid(), time: now, event: "Dispatched",
+            detail: `Driver: ${created.driverName} · Vehicle: ${created.vehicleNumber}`,
+            actor: currentUser.role,
+          },
+        ],
+      };
 
-    updateOrder(orderId, (o) => ({ ...o, status: "DISPATCHED", dispatches: [...o.dispatches, newDispatch] }));
-    toast.success(`Dispatch created — ${challanNumber}`);
-    setDispatchModal(null);
-    setDispatchForm({ driverName: "", driverPhone: "", vehicleNumber: "", estimatedDelivery: "" });
+      updateOrder(orderId, (o) => ({ ...o, status: "DISPATCHED", dispatches: [...o.dispatches, newDispatch] }));
+      toast.success(`Dispatch created — ${created.challanNumber}`);
+      setDispatchModal(null);
+      setDispatchForm({ driverName: "", driverPhone: "", vehicleNumber: "", estimatedDelivery: "" });
 
-    // Auto-open challan
-    const order = orderState.find((o) => o.id === orderId);
-    if (order) {
-      setTimeout(() => printChallan({ ...order, status: "DISPATCHED", dispatches: [...order.dispatches, newDispatch] }, newDispatch), 300);
+      // Auto-open challan
+      const order = orderState.find((o) => o.id === orderId);
+      if (order) {
+        setTimeout(() => printChallan({ ...order, status: "DISPATCHED", dispatches: [...order.dispatches, newDispatch] }, newDispatch), 300);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create dispatch");
     }
   };
 
-  const submitPOD = () => {
+  const submitPOD = async () => {
     if (!podModal) return;
     if (podForm.status === "DELIVERED" && !podForm.receiverName.trim()) {
       toast.error("Receiver name is required for delivery confirmation.");
       return;
     }
 
+    const { orderId, dispatchId } = podModal;
+    try {
+      const res = await fetch(`/api/dispatch/${dispatchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: podForm.status,
+          podReceiverName: podForm.status === "DELIVERED" ? podForm.receiverName : undefined,
+          podNotes: podForm.notes || undefined,
+          failureReason: podForm.status === "FAILED" ? podForm.failureReason : undefined,
+          rescheduledTo: podForm.status === "RESCHEDULED" && podForm.rescheduledTo ? podForm.rescheduledTo : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to update delivery status");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to update delivery status");
+      return;
+    }
+
     const now = new Date();
-    updateDispatch(podModal.orderId, podModal.dispatchId, (d) => {
+    updateDispatch(orderId, dispatchId, (d) => {
       const newEntry: TimelineEntry = {
         id: tid(), time: now,
         event: podForm.status === "DELIVERED" ? "Delivered" : podForm.status === "FAILED" ? "Delivery Failed" : "Rescheduled",
@@ -406,12 +447,12 @@ export function DispatchClient({ orders: rawOrders, currentUser }: DispatchClien
     });
 
     if (podForm.status === "DELIVERED") {
-      updateOrder(podModal.orderId, (o) => ({ ...o, status: "DELIVERED" }));
+      updateOrder(orderId, (o) => ({ ...o, status: "DELIVERED" }));
     }
 
     toast.success(
-      podForm.status === "DELIVERED" ? "✅ Delivery confirmed with POD!" :
-      podForm.status === "FAILED" ? "❌ Delivery marked as failed." : "🔄 Delivery rescheduled."
+      podForm.status === "DELIVERED" ? "Delivery confirmed with POD!" :
+      podForm.status === "FAILED" ? "Delivery marked as failed." : "Delivery rescheduled."
     );
     setPodModal(null);
     setPodForm({ status: "DELIVERED", receiverName: "", notes: "", photoName: null, failureReason: "", rescheduledTo: "" });

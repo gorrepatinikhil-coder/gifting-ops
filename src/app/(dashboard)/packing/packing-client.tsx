@@ -114,26 +114,40 @@ export function PackingClient({
   const mutUnit = (orderId: string, unitId: string, fn: (u: UnitState) => UnitState) =>
     mutOrder(orderId, (o) => ({ ...o, units: o.units.map((u) => (u.id === unitId ? fn(u) : u)) }));
 
-  const generateUnits = (orderId: string) => {
+  const generateUnits = async (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
     if (!order) return;
     const total = order.items.reduce((s, i) => s + i.quantity, 0);
-    const units: UnitState[] = Array.from({ length: total }, (_, i) => ({
-      id: `${orderId}-unit-${i + 1}`,
-      unitNumber: i + 1,
-      status: "PENDING",
-      correctBox: false,
-      productArranged: false,
-      ribbonAdded: false,
-      brandingDone: false,
-      insertsAdded: false,
-      labelAttached: false,
-      notes: "",
-      rejectionNote: "",
-      rejectedCount: 0,
-    }));
-    mutOrder(orderId, (o) => ({ ...o, units }));
-    toast.success(`${total} packing units created.`);
+    try {
+      const res = await fetch(`/api/packing/${orderId}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quantity: total }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to generate units");
+      }
+      const created: Array<{ id: string; unitNumber: number }> = await res.json();
+      const units: UnitState[] = created.map((u) => ({
+        id: u.id,
+        unitNumber: u.unitNumber,
+        status: "PENDING",
+        correctBox: false,
+        productArranged: false,
+        ribbonAdded: false,
+        brandingDone: false,
+        insertsAdded: false,
+        labelAttached: false,
+        notes: "",
+        rejectionNote: "",
+        rejectedCount: 0,
+      }));
+      mutOrder(orderId, (o) => ({ ...o, units }));
+      toast.success(`${total} packing units created.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to generate packing units");
+    }
   };
 
   const toggleCheck = (orderId: string, unitId: string, key: keyof Pick<UnitState, "correctBox" | "productArranged" | "ribbonAdded" | "brandingDone" | "insertsAdded" | "labelAttached">, value: boolean) => {
@@ -153,6 +167,19 @@ export function PackingClient({
     if (!allDone) { toast.error("Complete all checklist items first."); return; }
     mutUnit(orderId, unitId, (u) => ({ ...u, status: "PACKED" }));
     toast.success(`Unit #${unit.unitNumber} marked as packed.`);
+    fetch(`/api/packing/unit/${unitId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "PACKED",
+        correctBox: unit.correctBox,
+        productArranged: unit.productArranged,
+        ribbonAdded: unit.ribbonAdded,
+        brandingDone: unit.brandingDone,
+        insertsAdded: unit.insertsAdded,
+        labelAttached: unit.labelAttached,
+      }),
+    }).catch(() => console.error("Failed to persist packing unit"));
 
     if (autoAdvance) {
       // Find next PENDING unit after this one

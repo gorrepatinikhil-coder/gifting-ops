@@ -443,35 +443,62 @@ export function LeadsClient({ leads, salesUsers, currentUser }: LeadsClientProps
     if (!form.phone.trim()) return toast.error("Phone number is required.");
 
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 380));
-
-    const newLead: MockLead = {
-      id: `lead-${Date.now()}`,
-      companyName: form.companyName.trim(),
-      contactPerson: form.contactPerson.trim(),
-      phone: form.phone.trim(),
-      email: form.email.trim() || null,
-      requirementType: form.requirementType.trim() || null,
-      eventType: form.eventType,
-      expectedQty: form.expectedQty ? Number(form.expectedQty) : null,
-      budget: form.budget ? Number(form.budget) : null,
-      status: "NEW",
-      nextFollowUp: null,
-      createdAt: new Date(),
-      createdBy: { id: currentUser.id, name: currentUser.name },
-      assignedTo: salesUsers.find((u) => u.id === form.assignedToId) ?? null,
-      _count: { quotes: 0, orders: 0, samples: 0 },
-    };
-
-    setRows((prev) => [newLead, ...prev]);
-    toast.success(`Lead created — ${newLead.companyName}`);
-    setDialogOpen(false);
-    setSaving(false);
+    try {
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyName: form.companyName.trim(),
+          contactPerson: form.contactPerson.trim(),
+          phone: form.phone.trim(),
+          email: form.email.trim() || undefined,
+          eventType: form.eventType,
+          requirementType: form.requirementType.trim() || undefined,
+          expectedQty: form.expectedQty ? Number(form.expectedQty) : undefined,
+          budget: form.budget ? Number(form.budget) : undefined,
+          notes: form.notes || undefined,
+          assignedToId: form.assignedToId || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to create lead");
+      }
+      const created = await res.json();
+      const newLead: MockLead = {
+        ...created,
+        createdAt: new Date(created.createdAt),
+        nextFollowUp: created.nextFollowUp ? new Date(created.nextFollowUp) : null,
+        createdBy: { id: currentUser.id, name: currentUser.name },
+        assignedTo: salesUsers.find((u) => u.id === form.assignedToId) ?? null,
+        _count: { quotes: 0, orders: 0, samples: 0 },
+      };
+      setRows((prev) => [newLead, ...prev]);
+      toast.success(`Lead created — ${newLead.companyName}`);
+      setDialogOpen(false);
+      setForm({ ...EMPTY_FORM, assignedToId: currentUser.id });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create lead");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleStatusChange = (id: string, status: LeadStatus) => {
+  const handleStatusChange = async (id: string, status: LeadStatus) => {
+    const prevStatus = rows.find((l) => l.id === id)?.status;
     setRows((prev) => prev.map((l) => (l.id === id ? { ...l, status } : l)));
-    toast.success("Status updated.");
+    try {
+      const res = await fetch(`/api/leads/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error("Failed to update status");
+      toast.success("Status updated.");
+    } catch {
+      if (prevStatus) setRows((prev) => prev.map((l) => (l.id === id ? { ...l, status: prevStatus } : l)));
+      toast.error("Failed to update status.");
+    }
   };
 
   const statusOf = (s: LeadStatus) => STATUSES.find((x) => x.value === s)!;
