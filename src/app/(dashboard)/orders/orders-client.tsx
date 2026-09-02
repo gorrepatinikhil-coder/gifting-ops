@@ -5,13 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Plus, Search, AlertTriangle, Zap,
-  ArrowRight, ChevronUp, ChevronDown, ShoppingCart, X,
+  ArrowRight, ChevronUp, ChevronDown, ShoppingCart, X, Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn, formatCurrency, formatDate, daysUntil } from "@/lib/utils";
@@ -130,7 +132,9 @@ function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; s
 
 // ─── Main component ─────────────────────────────────────────────────────────
 
-export function OrdersClient({ orders: rawOrders }: OrdersClientProps) {
+const DELETEABLE_STATUSES = ["CONFIRMED", "ADVANCE_PENDING", "CANCELLED"];
+
+export function OrdersClient({ orders: rawOrders, currentUser }: OrdersClientProps) {
   const router = useRouter();
   const orders = rawOrders as Order[];
 
@@ -141,6 +145,29 @@ export function OrdersClient({ orders: rawOrders }: OrdersClientProps) {
   const [deliveryTab, setDeliveryTab] = useState<DeliveryTab>("all");
   const [sortKey, setSortKey] = useState<SortKey>("deliveryDate");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const canDelete = ["ADMIN", "OWNER"].includes(currentUser?.role ?? "");
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/orders/${deleteTarget.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to delete order");
+      }
+      toast.success(`Order ${deleteTarget.orderNumber} deleted`);
+      setDeleteTarget(null);
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to delete order");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   function handleSort(col: SortKey) {
     if (col === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -528,13 +555,25 @@ export function OrdersClient({ orders: rawOrders }: OrdersClientProps) {
                             {order.assignedTo?.name ?? "—"}
                           </span>
                         </td>
-                        {/* Link */}
+                        {/* Actions */}
                         <td className="px-3 py-3.5" onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
-                            <Link href={`/orders/${order.id}`}>
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </Link>
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            {canDelete && DELETEABLE_STATUSES.includes(order.status) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => setDeleteTarget(order)}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
+                              <Link href={`/orders/${order.id}`}>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </Link>
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -545,6 +584,27 @@ export function OrdersClient({ orders: rawOrders }: OrdersClientProps) {
           )}
         </Card>
       )}
+
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete order {deleteTarget?.orderNumber}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the order for {deleteTarget?.clientName}. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

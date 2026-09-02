@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Zap, Printer, AlertTriangle, CheckCircle2, ClipboardList,
+  ArrowLeft, Zap, Printer, AlertTriangle, CheckCircle2, ClipboardList, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { formatCurrency, formatDate, formatDateTime, daysUntil } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -65,9 +66,31 @@ interface OrderDetailClientProps {
   currentUser: { id: string; name: string; role: string };
 }
 
+const DELETEABLE_STATUSES = ["CONFIRMED", "ADVANCE_PENDING", "CANCELLED"];
+
 export function OrderDetailClient({ order, currentUser }: OrderDetailClientProps) {
   const router = useRouter();
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const canDelete = ["ADMIN", "OWNER"].includes(currentUser.role) && DELETEABLE_STATUSES.includes(order.status);
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error || "Failed to delete order");
+      }
+      toast.success(`Order ${order.orderNumber} deleted`);
+      router.push("/orders");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to delete order");
+      setDeleting(false);
+    }
+  }
 
   const lifecycleStage = order.lifecycleStage ?? mapOrderStatusToLifecycle(order.status);
   const lifecycleHistory: LifecycleHistoryEntry[] = order.lifecycleHistory ?? [];
@@ -128,6 +151,16 @@ export function OrderDetailClient({ order, currentUser }: OrderDetailClientProps
           <Button variant="outline" size="sm" onClick={() => window.print()}>
             <Printer className="w-3.5 h-3.5" />Print
           </Button>
+          {canDelete && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive border-destructive/30 hover:bg-destructive/10"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="w-3.5 h-3.5" />Delete
+            </Button>
+          )}
         </div>
       </div>
 
@@ -583,6 +616,23 @@ export function OrderDetailClient({ order, currentUser }: OrderDetailClientProps
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={showDeleteDialog} onOpenChange={(o) => !o && setShowDeleteDialog(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete order {order.orderNumber}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete this order for {order.clientName}. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)} disabled={deleting}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
